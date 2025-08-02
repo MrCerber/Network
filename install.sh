@@ -1,5 +1,5 @@
 #!/bin/bash
-# filepath: mrcerber_vps_setup.sh
+# filepath: install.sh
 
 # Цвета для красивого CLI
 RED='\033[0;31m'
