@@ -18,7 +18,7 @@
 ## 🚀 Быстрая установка
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/USERNAME/REPO-NAME/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/MrCerber/Network/main/install.sh)
 ```
 
 ## 📋 Опции меню
@@ -102,8 +102,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/USERNAME/REPO-NAME/main/instal
 
 ## 📜 Лицензия
 
-MIT License
+[MIT License](LICENSE)
 
 ## 👨‍💻 Разработчик
 
-MrCerber
+[MrCerber](https://github.com/MrCerber)
