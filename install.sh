@@ -552,7 +552,7 @@ show_menu() {
     echo -e "${RED}0)${NC} Выход"
     echo ""
     echo -e "${YELLOW}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-    echo -e "┃  Сделано с ♥ для MrCerber Network           ┃"
+    echo -e "┃  Сделано с ♥ от MrCerber Network           ┃"
     echo -e "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
     

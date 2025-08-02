@@ -54,7 +54,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/USERNAME/REPO-NAME/main/instal
 0) Выход
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃  Сделано с ♥ для MrCerber Network           ┃
+┃  Сделано с ♥ от MrCerber Network           ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ```
 
