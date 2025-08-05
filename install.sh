@@ -146,13 +146,96 @@ setup_swap() {
     print_success "Swap-файл успешно настроен!"
 }
 
+# Функция для проверки DNS конфигурации домена
+check_domain_dns() {
+    local domain=$1
+    local server_ip
+    local domain_ip
+    
+    print_message "Проверка DNS конфигурации для домена $domain..."
+    
+    # Получение внешнего IP адреса сервера
+    server_ip=$(curl -s https://ipv4.icanhazip.com/ || curl -s https://api.ipify.org)
+    if [ -z "$server_ip" ]; then
+        print_error "Не удалось определить внешний IP адрес сервера"
+        return 1
+    fi
+    
+    print_message "IP адрес сервера: $server_ip"
+    
+    # Проверка A записи для основного домена
+    print_message "Проверка A записи для $domain..."
+    domain_ip=$(dig +short A $domain @8.8.8.8 | head -n1)
+    
+    if [ -z "$domain_ip" ]; then
+        print_error "A запись для домена $domain не найдена"
+        print_message "Убедитесь, что вы настроили DNS запись:"
+        echo "  Тип: A"
+        echo "  Имя: $domain (или @)"
+        echo "  Значение: $server_ip"
+        return 1
+    fi
+    
+    if [ "$domain_ip" != "$server_ip" ]; then
+        print_warning "A запись для $domain указывает на $domain_ip, но IP сервера $server_ip"
+        read -p "Продолжить настройку несмотря на несоответствие DNS? (y/n): " continue_anyway
+        if [[ $continue_anyway != "y" && $continue_anyway != "Y" ]]; then
+            print_message "Настройте DNS запись и попробуйте снова:"
+            echo "  Тип: A"
+            echo "  Имя: $domain (или @)"
+            echo "  Значение: $server_ip"
+            return 1
+        fi
+    else
+        print_success "A запись для $domain настроена корректно ($domain_ip)"
+    fi
+    
+    # Проверка A записи для www поддомена
+    print_message "Проверка A записи для www.$domain..."
+    www_domain_ip=$(dig +short A www.$domain @8.8.8.8 | head -n1)
+    
+    if [ -z "$www_domain_ip" ]; then
+        print_warning "A запись для www.$domain не найдена"
+        print_message "Рекомендуется настроить DNS запись для www:"
+        echo "  Тип: A"
+        echo "  Имя: www"
+        echo "  Значение: $server_ip"
+        read -p "Продолжить без www записи? (y/n): " continue_without_www
+        if [[ $continue_without_www != "y" && $continue_without_www != "Y" ]]; then
+            return 1
+        fi
+    elif [ "$www_domain_ip" != "$server_ip" ]; then
+        print_warning "A запись для www.$domain указывает на $www_domain_ip, но IP сервера $server_ip"
+        read -p "Продолжить настройку несмотря на несоответствие DNS для www? (y/n): " continue_anyway_www
+        if [[ $continue_anyway_www != "y" && $continue_anyway_www != "Y" ]]; then
+            print_message "Настройте DNS запись для www и попробуйте снова:"
+            echo "  Тип: A"
+            echo "  Имя: www"
+            echo "  Значение: $server_ip"
+            return 1
+        fi
+    else
+        print_success "A запись для www.$domain настроена корректно ($www_domain_ip)"
+    fi
+    
+    # Дополнительная проверка доступности через HTTP
+    print_message "Проверка HTTP доступности домена..."
+    if timeout 10 curl -s -I "http://$domain" > /dev/null 2>&1; then
+        print_success "Домен $domain доступен по HTTP"
+    else
+        print_warning "Домен $domain недоступен по HTTP (это нормально, если веб-сервер еще не настроен)"
+    fi
+    
+    return 0
+}
+
 # Установка домена и демо-страницы с улучшенной конфигурацией
 setup_domain() {
     print_logo
     print_message "Настройка домена и демо-страницы с расширенной конфигурацией..."
     
     # Установка необходимых пакетов
-    apt install -y nginx certbot python3-certbot-nginx ssl-cert
+    apt install -y nginx certbot python3-certbot-nginx ssl-cert dnsutils
     
     # Запрос домена
     read -p "Введите ваш домен (например, example.com): " domain_name
@@ -160,6 +243,15 @@ setup_domain() {
         print_error "Домен не указан. Отмена настройки."
         return 1
     fi
+    
+    # Проверка DNS конфигурации домена
+    if ! check_domain_dns "$domain_name"; then
+        print_error "Проверка DNS не пройдена. Настройте DNS и попробуйте снова."
+        return 1
+    fi
+    
+    echo ""
+    read -p "Нажмите Enter для продолжения настройки домена..."
     
     # Создание директорий
     print_message "Создание необходимых директорий..."
