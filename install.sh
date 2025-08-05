@@ -517,15 +517,96 @@ install_docker() {
     print_success "Docker успешно установлен и проверен!"
 }
 
+# Функция для копирования SSL сертификатов
+copy_ssl_certificates() {
+    print_message "Копирование SSL сертификатов в /root/cert/..."
+    
+    # Создание директории для сертификатов
+    mkdir -p /root/cert
+    
+    # Проверка наличия сертификатов Let's Encrypt
+    if [ -d "/etc/letsencrypt/live" ]; then
+        # Поиск всех доменов с сертификатами
+        for domain_dir in /etc/letsencrypt/live/*/; do
+            if [ -d "$domain_dir" ]; then
+                domain_name=$(basename "$domain_dir")
+                
+                # Пропускаем README файл
+                if [ "$domain_name" = "README" ]; then
+                    continue
+                fi
+                
+                print_message "Копирование сертификатов для домена: $domain_name"
+                
+                # Создание директории для домена
+                mkdir -p "/root/cert/$domain_name"
+                
+                # Копирование файлов сертификатов
+                if [ -f "$domain_dir/fullchain.pem" ]; then
+                    cp "$domain_dir/fullchain.pem" "/root/cert/$domain_name/"
+                    print_success "Скопирован fullchain.pem для $domain_name"
+                fi
+                
+                if [ -f "$domain_dir/privkey.pem" ]; then
+                    cp "$domain_dir/privkey.pem" "/root/cert/$domain_name/"
+                    print_success "Скопирован privkey.pem для $domain_name"
+                fi
+                
+                if [ -f "$domain_dir/cert.pem" ]; then
+                    cp "$domain_dir/cert.pem" "/root/cert/$domain_name/"
+                    print_success "Скопирован cert.pem для $domain_name"
+                fi
+                
+                if [ -f "$domain_dir/chain.pem" ]; then
+                    cp "$domain_dir/chain.pem" "/root/cert/$domain_name/"
+                    print_success "Скопирован chain.pem для $domain_name"
+                fi
+                
+                # Установка правильных прав доступа
+                chmod 600 "/root/cert/$domain_name/"*.pem
+                chown root:root "/root/cert/$domain_name/"*.pem
+            fi
+        done
+        
+        # Вывод информации о скопированных сертификатах
+        print_success "SSL сертификаты скопированы в /root/cert/"
+        print_message "Структура директории /root/cert/:"
+        ls -la /root/cert/
+        
+        print_message "Для использования в 3X-UI:"
+        echo "Путь к сертификату: /root/cert/[имя_домена]/fullchain.pem"
+        echo "Путь к приватному ключу: /root/cert/[имя_домена]/privkey.pem"
+    else
+        print_warning "SSL сертификаты Let's Encrypt не найдены в /etc/letsencrypt/live/"
+        print_message "Убедитесь, что вы сначала настроили домен с SSL (опция 2)"
+    fi
+}
+
 # Установка 3X-UI
 install_3xui() {
     print_logo
     print_message "Установка 3X-UI..."
     
+    # Проверка наличия SSL сертификатов и их копирование
+    read -p "Хотите скопировать существующие SSL сертификаты в /root/cert/ перед установкой? (y/n): " copy_ssl
+    if [[ $copy_ssl == "y" || $copy_ssl == "Y" ]]; then
+        copy_ssl_certificates
+        echo ""
+        read -p "Нажмите Enter для продолжения установки 3X-UI..."
+    fi
+    
     # Установка с использованием официального скрипта
     bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
     
     print_success "3X-UI установлен. Вы можете управлять им через веб-интерфейс."
+    
+    if [[ $copy_ssl == "y" || $copy_ssl == "Y" ]]; then
+        echo ""
+        print_message "SSL сертификаты доступны в /root/cert/ для настройки в 3X-UI"
+        print_message "В настройках панели используйте пути:"
+        echo "  - Сертификат: /root/cert/[имя_домена]/fullchain.pem"
+        echo "  - Приватный ключ: /root/cert/[имя_домена]/privkey.pem"
+    fi
 }
 
 # Установка и настройка UFW
@@ -594,7 +675,8 @@ show_menu() {
     echo -e "${CYAN}3)${NC} Установка Docker"
     echo -e "${CYAN}4)${NC} Установка 3X-UI"
     echo -e "${CYAN}5)${NC} Настройка файрвола UFW"
-    echo -e "${CYAN}6)${NC} Полная настройка (опции 1-5)"
+    echo -e "${CYAN}6)${NC} Копирование SSL сертификатов в /root/cert/"
+    echo -e "${CYAN}7)${NC} Полная настройка (опции 1-5)"
     echo -e "${RED}0)${NC} Выход"
     echo ""
     echo -e "${YELLOW}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -602,7 +684,7 @@ show_menu() {
     echo -e "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
     
-    read -p "Выберите опцию [0-6]: " choice
+    read -p "Выберите опцию [0-7]: " choice
     
     case $choice in
         1) initial_setup ;;
@@ -610,7 +692,8 @@ show_menu() {
         3) install_docker ;;
         4) install_3xui ;;
         5) setup_ufw ;;
-        6) 
+        6) copy_ssl_certificates ;;
+        7) 
            initial_setup
            setup_domain
            install_docker
