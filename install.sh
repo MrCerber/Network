@@ -161,11 +161,11 @@ setup_domain() {
         return 1
     fi
     
-    # Создание оптимизированной конфигурации Nginx
-    print_message "Создание оптимизированной конфигурации Nginx для домена $domain_name..."
-    
-    # Создание директории для логов
+    # Создание директорий
+    print_message "Создание необходимых директорий..."
     mkdir -p /var/log/nginx/$domain_name
+    mkdir -p /var/www/letsencrypt
+    mkdir -p /var/www/$domain_name
 
     # Создание файла с SSL параметрами
     cat > /etc/nginx/ssl-params.conf << EOF
@@ -191,9 +191,10 @@ EOF
     print_message "Генерация DH параметров для улучшенной безопасности SSL (это может занять некоторое время)..."
     openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
 
-    # Настройка оптимизированного Nginx для домена
+    # Создание временной HTTP-конфигурации для получения SSL сертификата
+    print_message "Создание временной HTTP-конфигурации для получения SSL сертификата..."
     cat > /etc/nginx/sites-available/$domain_name << EOF
-# Редирект с HTTP на HTTPS
+# Временная HTTP конфигурация для получения SSL сертификата
 server {
     listen 80;
     listen [::]:80;
@@ -203,86 +204,22 @@ server {
     access_log /var/log/nginx/$domain_name/access.log;
     error_log /var/log/nginx/$domain_name/error.log;
     
-    # Редирект на HTTPS
-    location / {
-        return 301 https://$domain_name\$request_uri;
-    }
+    # Корневая директория
+    root /var/www/$domain_name;
+    index index.html index.htm;
     
     # Конфигурация для Let's Encrypt
     location ~ /.well-known/acme-challenge {
         root /var/www/letsencrypt;
         allow all;
     }
-}
-
-# Основной HTTPS сервер
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name $domain_name;
-    
-    # Логи
-    access_log /var/log/nginx/$domain_name/access.log;
-    error_log /var/log/nginx/$domain_name/error.log;
-    
-    # SSL
-    ssl_certificate /etc/letsencrypt/live/$domain_name/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$domain_name/privkey.pem;
-    ssl_trusted_certificate /etc/letsencrypt/live/$domain_name/chain.pem;
-    
-    # Включение оптимизированных SSL параметров
-    include /etc/nginx/ssl-params.conf;
-    
-    # Корневая директория
-    root /var/www/$domain_name;
-    index index.html index.htm;
-    
-    # Настройки производительности и кэширования
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        expires 30d;
-        add_header Cache-Control "public, no-transform";
-    }
-    
-    # Защита от доступа к скрытым файлам
-    location ~ /\. {
-        deny all;
-        access_log off;
-        log_not_found off;
-    }
     
     # Основная конфигурация
     location / {
         try_files \$uri \$uri/ =404;
     }
-
-    # Сжатие ответов
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
-}
-
-# Редирект с www на non-www
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name www.$domain_name;
-    
-    # SSL
-    ssl_certificate /etc/letsencrypt/live/$domain_name/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$domain_name/privkey.pem;
-    include /etc/nginx/ssl-params.conf;
-    
-    return 301 https://$domain_name\$request_uri;
 }
 EOF
-
-    # Создание директории для Let's Encrypt
-    mkdir -p /var/www/letsencrypt
-    
-    # Создание директории и демо-страницы с Tailwind CSS
-    mkdir -p /var/www/$domain_name
     
     # Создание улучшенной демо-страницы с Tailwind CSS
     cat > /var/www/$domain_name/index.html << EOF
@@ -372,8 +309,16 @@ EOF
     chown -R www-data:www-data /var/www/$domain_name /var/www/letsencrypt
     chmod -R 755 /var/www/$domain_name /var/www/letsencrypt
     
+    # Удаление конфигурации по умолчанию если существует
+    if [ -f /etc/nginx/sites-enabled/default ]; then
+        rm -f /etc/nginx/sites-enabled/default
+    fi
+    
+    # Активация временной HTTP конфигурации
+    ln -sf /etc/nginx/sites-available/$domain_name /etc/nginx/sites-enabled/
+    
     # Проверка конфигурации Nginx
-    print_message "Проверка конфигурации Nginx..."
+    print_message "Проверка временной HTTP конфигурации Nginx..."
     nginx -t
     
     if [ $? -ne 0 ]; then
@@ -381,43 +326,144 @@ EOF
         return 1
     fi
     
-    # Активация конфигурации и перезапуск Nginx
-    ln -sf /etc/nginx/sites-available/$domain_name /etc/nginx/sites-enabled/
-    
-    # Удаление конфигурации по умолчанию если существует
-    if [ -f /etc/nginx/sites-enabled/default ]; then
-        rm -f /etc/nginx/sites-enabled/default
-    fi
-    
-    # Перезапуск Nginx
+    # Перезапуск Nginx с временной конфигурацией
     systemctl restart nginx
+    
+    if [ $? -ne 0 ]; then
+        print_error "Не удалось запустить Nginx. Проверьте логи: systemctl status nginx"
+        return 1
+    fi
     
     # Установка SSL сертификата через Certbot
     print_message "Установка SSL сертификата через Certbot..."
     
-    # Создаем временную конфигурацию для первичного получения сертификата
-    certbot --nginx -d $domain_name -d www.$domain_name --non-interactive --agree-tos --email admin@$domain_name
+    # Получение сертификата с помощью webroot
+    certbot certonly --webroot -w /var/www/letsencrypt -d $domain_name -d www.$domain_name --non-interactive --agree-tos --email admin@$domain_name
     
     if [ $? -ne 0 ]; then
-        print_warning "Не удалось автоматически настроить SSL. Попробуйте вручную выполнить команду:"
-        echo "sudo certbot --nginx -d $domain_name -d www.$domain_name"
-    else
-        print_success "SSL сертификат успешно установлен для $domain_name!"
-        
-        # Настройка автоматического обновления сертификатов
-        print_message "Настройка автоматического обновления SSL сертификатов..."
-        
-        # Проверяем существование задачи в crontab
-        if ! crontab -l | grep -q certbot; then
-            (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook \"systemctl reload nginx\"") | crontab -
-            print_success "Автоматическое обновление SSL настроено!"
-        else
-            print_message "Задача автообновления SSL уже существует в crontab."
-        fi
+        print_warning "Не удалось автоматически получить SSL сертификат."
+        print_message "Попробуйте выполнить команду вручную:"
+        echo "sudo certbot certonly --webroot -w /var/www/letsencrypt -d $domain_name -d www.$domain_name"
+        return 1
     fi
     
-    # Финальная перезагрузка Nginx
+    print_success "SSL сертификат успешно получен!"
+    
+    # Создание полной HTTPS конфигурации
+    print_message "Создание полной HTTPS конфигурации..."
+    cat > /etc/nginx/sites-available/$domain_name << EOF
+# Редирект с HTTP на HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain_name www.$domain_name;
+    
+    # Логи
+    access_log /var/log/nginx/$domain_name/access.log;
+    error_log /var/log/nginx/$domain_name/error.log;
+    
+    # Конфигурация для Let's Encrypt
+    location ~ /.well-known/acme-challenge {
+        root /var/www/letsencrypt;
+        allow all;
+    }
+    
+    # Редирект на HTTPS
+    location / {
+        return 301 https://$domain_name\$request_uri;
+    }
+}
+
+# Основной HTTPS сервер
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $domain_name;
+    
+    # Логи
+    access_log /var/log/nginx/$domain_name/access.log;
+    error_log /var/log/nginx/$domain_name/error.log;
+    
+    # SSL
+    ssl_certificate /etc/letsencrypt/live/$domain_name/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain_name/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/$domain_name/chain.pem;
+    
+    # Включение оптимизированных SSL параметров
+    include /etc/nginx/ssl-params.conf;
+    
+    # Корневая директория
+    root /var/www/$domain_name;
+    index index.html index.htm;
+    
+    # Настройки производительности и кэширования
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+    }
+    
+    # Защита от доступа к скрытым файлам
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    # Основная конфигурация
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    # Сжатие ответов
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
+}
+
+# Редирект с www на non-www
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name www.$domain_name;
+    
+    # SSL
+    ssl_certificate /etc/letsencrypt/live/$domain_name/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain_name/privkey.pem;
+    include /etc/nginx/ssl-params.conf;
+    
+    return 301 https://$domain_name\$request_uri;
+}
+EOF
+
+    # Финальная проверка конфигурации
+    print_message "Финальная проверка HTTPS конфигурации..."
+    nginx -t
+    
+    if [ $? -ne 0 ]; then
+        print_error "Ошибка в финальной конфигурации Nginx!"
+        return 1
+    fi
+    
+    # Перезапуск с полной конфигурацией
     systemctl restart nginx
+    
+    if [ $? -ne 0 ]; then
+        print_error "Не удалось перезапустить Nginx с HTTPS конфигурацией!"
+        return 1
+    fi
+    
+    # Настройка автоматического обновления сертификатов
+    print_message "Настройка автоматического обновления SSL сертификатов..."
+    
+    # Проверяем существование задачи в crontab
+    if ! crontab -l 2>/dev/null | grep -q certbot; then
+        (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet --post-hook \"systemctl reload nginx\"") | crontab -
+        print_success "Автоматическое обновление SSL настроено!"
+    else
+        print_message "Задача автообновления SSL уже существует в crontab."
+    fi
     
     print_success "Домен $domain_name успешно настроен с оптимизированным Nginx и SSL сертификатом!"
     print_message "Ваш сайт доступен по адресу: https://$domain_name"
