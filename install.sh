@@ -966,13 +966,13 @@ setup_auto_restart() {
     case $restart_choice in
         1) # Ежедневно
             read -p "Введите время перезапуска (ЧЧ:ММ, например 03:00): " restart_time
-            if [[ $restart_time =~ ^([0-1][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+            if [[ $restart_time =~ ^([0-1][0-9]|2[0-3]):([0-5][0-9])$ ]]; then
                 hour=${restart_time%:*}
                 minute=${restart_time#*:}
                 (crontab -l 2>/dev/null | grep -v "shutdown -r"; echo "$minute $hour * * * /sbin/shutdown -r +5 'Плановый перезапуск через 5 минут'") | crontab -
                 print_success "Ежедневный перезапуск настроен на $restart_time"
             else
-                print_error "Неверный формат времени"
+                print_error "Неверный формат времени. Используйте формат ЧЧ:ММ (например, 02:00)"
                 return 1
             fi
             ;;
