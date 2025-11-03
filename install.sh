@@ -559,6 +559,50 @@ EOF
     
     print_success "Домен $domain_name успешно настроен с оптимизированным Nginx и SSL сертификатом!"
     print_message "Ваш сайт доступен по адресу: https://$domain_name"
+
+    monitor_ssl_certificates
+}
+
+monitor_ssl_certificates() {
+    print_message "Настройка мониторинга SSL сертификатов..."
+    
+    # Создаем скрипт мониторинга
+    cat > /usr/local/bin/check-ssl-renewal.sh << 'EOF'
+#!/bin/bash
+
+# Проверка SSL сертификатов
+for domain in $(find /etc/letsencrypt/live -type d -name "*.*"); do
+    domain=$(basename $domain)
+    
+    # Пропускаем служебные директории
+    if [ "$domain" == "README" ]; then
+        continue
+    fi
+    
+    # Проверка срока действия
+    exp_date=$(openssl x509 -in /etc/letsencrypt/live/$domain/cert.pem -noout -enddate | cut -d= -f2)
+    exp_epoch=$(date -d "$exp_date" +%s)
+    now_epoch=$(date +%s)
+    days_left=$(( ($exp_epoch - $now_epoch) / 86400 ))
+    
+    if [ $days_left -lt 30 ]; then
+        # Принудительное обновление
+        certbot renew --force-renewal --cert-name $domain
+        systemctl reload nginx
+        
+        # Отправка уведомления (можно настроить через телеграм или email)
+        echo "Сертификат для $domain был обновлен. Осталось дней: $days_left" >> /var/log/ssl-renewal.log
+    fi
+done
+EOF
+
+    # Делаем скрипт исполняемым
+    chmod +x /usr/local/bin/check-ssl-renewal.sh
+    
+    # Добавляем в crontab ежедневную проверку
+    (crontab -l 2>/dev/null; echo "0 3 * * * /usr/local/bin/check-ssl-renewal.sh") | sort | uniq | crontab -
+    
+    print_success "Мониторинг SSL настроен!"
 }
 
 # Установка Docker
@@ -757,18 +801,264 @@ setup_ufw() {
     print_success "UFW настроен и активирован!"
 }
 
+# Ручное обновление SSL сертификатов
+manual_ssl_renewal() {
+    print_logo
+    print_message "Ручное обновление SSL сертификатов..."
+    
+    # Проверка наличия сертификатов
+    if [ ! -d "/etc/letsencrypt/live" ]; then
+        print_error "SSL сертификаты не найдены. Сначала настройте домен с SSL (опция 2)"
+        return 1
+    fi
+    
+    # Показать список доменов с сертификатами
+    echo "Найденные домены с SSL сертификатами:"
+    domains=()
+    i=1
+    for domain_dir in /etc/letsencrypt/live/*/; do
+        domain_name=$(basename "$domain_dir")
+        if [ "$domain_name" != "README" ]; then
+            echo "$i) $domain_name"
+            domains+=("$domain_name")
+            ((i++))
+        fi
+    done
+    
+    if [ ${#domains[@]} -eq 0 ]; then
+        print_error "Сертификаты не найдены"
+        return 1
+    fi
+    
+    echo ""
+    echo "Выберите действие:"
+    echo "1) Обновить все сертификаты"
+    echo "2) Обновить конкретный домен"
+    read -p "Ваш выбор (1-2): " renewal_choice
+    
+    case $renewal_choice in
+        1)
+            print_message "Обновление всех сертификатов..."
+            certbot renew --force-renewal
+            if [ $? -eq 0 ]; then
+                systemctl reload nginx
+                print_success "Все сертификаты успешно обновлены!"
+            else
+                print_error "Произошла ошибка при обновлении сертификатов"
+            fi
+            ;;
+        2)
+            read -p "Введите номер домена для обновления: " domain_number
+            if [ $domain_number -ge 1 ] && [ $domain_number -le ${#domains[@]} ]; then
+                selected_domain=${domains[$domain_number-1]}
+                print_message "Обновление сертификата для домена $selected_domain..."
+                certbot renew --force-renewal --cert-name "$selected_domain"
+                if [ $? -eq 0 ]; then
+                    systemctl reload nginx
+                    print_success "Сертификат для $selected_domain успешно обновлен!"
+                else
+                    print_error "Произошла ошибка при обновлении сертификата"
+                fi
+            else
+                print_error "Неверный номер домена"
+            fi
+            ;;
+        *)
+            print_error "Неверный выбор"
+            ;;
+    esac
+    
+    # Проверка статуса сертификатов после обновления
+    print_message "Статус сертификатов:"
+    certbot certificates
+}
+
+setup_timezone() {
+    print_logo
+    print_message "Настройка часового пояса (Timezone)..."
+    
+    # Показать текущий часовой пояс
+    current_timezone=$(timedatectl | grep "Time zone" | awk '{print $3}')
+    print_message "Текущий часовой пояс: $current_timezone"
+    
+    echo ""
+    echo "Доступные регионы:"
+    echo "1) Europe (Европа)"
+    echo "2) Asia (Азия)"
+    echo "3) America (Америка)"
+    echo "4) Africa (Африка)"
+    echo "5) Pacific (Тихий океан)"
+    echo "6) Поиск по названию города"
+    echo "0) Отмена"
+    
+    read -p "Выберите регион [0-6]: " region_choice
+    
+    case $region_choice in
+        1) region="Europe" ;;
+        2) region="Asia" ;;
+        3) region="America" ;;
+        4) region="Africa" ;;
+        5) region="Pacific" ;;
+        6) 
+            read -p "Введите название города (например, Moscow): " city
+            if timedatectl list-timezones | grep -i "$city" > /dev/null; then
+                available_zones=$(timedatectl list-timezones | grep -i "$city")
+                echo "Найденные часовые пояса:"
+                echo "$available_zones" | nl
+                read -p "Выберите номер часового пояса: " zone_number
+                timezone=$(echo "$available_zones" | sed -n "${zone_number}p")
+            else
+                print_error "Город не найден"
+                return 1
+            fi
+            ;;
+        0) return 0 ;;
+        *) 
+            print_error "Неверный выбор"
+            return 1
+            ;;
+    esac
+    
+    if [ -n "$region" ] && [ -z "$timezone" ]; then
+        echo ""
+        echo "Доступные города в регионе $region:"
+        timedatectl list-timezones | grep "^$region/" | cut -d'/' -f2 | nl
+        
+        read -p "Выберите номер города: " city_number
+        timezone=$(timedatectl list-timezones | grep "^$region/" | sed -n "${city_number}p")
+    fi
+    
+    if [ -n "$timezone" ]; then
+        print_message "Установка часового пояса $timezone..."
+        if timedatectl set-timezone "$timezone"; then
+            print_success "Часовой пояс успешно установлен!"
+            print_message "Текущее время: $(date)"
+        else
+            print_error "Ошибка при установке часового пояса"
+        fi
+    fi
+}
+
+setup_auto_restart() {
+    print_logo
+    print_message "Настройка автоматического перезапуска сервера..."
+    
+    # Показать текущие задачи перезапуска
+    if crontab -l 2>/dev/null | grep -q "shutdown -r"; then
+        print_message "Текущее расписание перезапуска:"
+        crontab -l | grep "shutdown -r"
+        echo ""
+        read -p "Хотите изменить существующее расписание? (y/n): " change_schedule
+        if [[ $change_schedule != "y" && $change_schedule != "Y" ]]; then
+            return 0
+        fi
+    fi
+    
+    echo "Выберите периодичность перезапуска:"
+    echo "1) Ежедневно"
+    echo "2) Еженедельно"
+    echo "3) Ежемесячно"
+    echo "4) Отключить автоперезапуск"
+    echo "0) Отмена"
+    
+    read -p "Ваш выбор [0-4]: " restart_choice
+    
+    case $restart_choice in
+        1) # Ежедневно
+            read -p "Введите время перезапуска (ЧЧ:ММ, например 03:00): " restart_time
+            if [[ $restart_time =~ ^([0-1][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+                hour=${restart_time%:*}
+                minute=${restart_time#*:}
+                (crontab -l 2>/dev/null | grep -v "shutdown -r"; echo "$minute $hour * * * /sbin/shutdown -r +5 'Плановый перезапуск через 5 минут'") | crontab -
+                print_success "Ежедневный перезапуск настроен на $restart_time"
+            else
+                print_error "Неверный формат времени"
+                return 1
+            fi
+            ;;
+            
+        2) # Еженедельно
+            echo "Выберите день недели:"
+            echo "1) Понедельник"
+            echo "2) Вторник"
+            echo "3) Среда"
+            echo "4) Четверг"
+            echo "5) Пятница"
+            echo "6) Суббота"
+            echo "7) Воскресенье"
+            read -p "Введите номер дня [1-7]: " day_number
+            read -p "Введите время перезапуска (ЧЧ:ММ, например 03:00): " restart_time
+            
+            if [[ $restart_time =~ ^([0-1][0-9]|2[0-3]):[0-5][0-9]$ ]] && [[ $day_number =~ ^[1-7]$ ]]; then
+                hour=${restart_time%:*}
+                minute=${restart_time#*:}
+                (crontab -l 2>/dev/null | grep -v "shutdown -r"; echo "$minute $hour * * $day_number /sbin/shutdown -r +5 'Плановый перезапуск через 5 минут'") | crontab -
+                print_success "Еженедельный перезапуск настроен на $restart_time, день недели: $day_number"
+            else
+                print_error "Неверный формат времени или дня недели"
+                return 1
+            fi
+            ;;
+            
+        3) # Ежемесячно
+            read -p "Введите день месяца [1-31]: " month_day
+            read -p "Введите время перезапуска (ЧЧ:ММ, например 03:00): " restart_time
+            
+            if [[ $restart_time =~ ^([0-1][0-9]|2[0-3]):[0-5][0-9]$ ]] && [[ $month_day =~ ^[1-9]|[12][0-9]|3[01]$ ]]; then
+                hour=${restart_time%:*}
+                minute=${restart_time#*:}
+                (crontab -l 2>/dev/null | grep -v "shutdown -r"; echo "$minute $hour $month_day * * /sbin/shutdown -r +5 'Плановый перезапуск через 5 минут'") | crontab -
+                print_success "Ежемесячный перезапуск настроен на $restart_time, день: $month_day"
+            else
+                print_error "Неверный формат времени или дня месяца"
+                return 1
+            fi
+            ;;
+            
+        4) # Отключить автоперезапуск
+            crontab -l 2>/dev/null | grep -v "shutdown -r" | crontab -
+            print_success "Автоматический перезапуск отключен"
+            ;;
+            
+        0) return 0 ;;
+        
+        *)
+            print_error "Неверный выбор"
+            return 1
+            ;;
+    esac
+    
+    # Показать текущее расписание
+    echo ""
+    print_message "Текущее расписание перезапуска:"
+    crontab -l | grep "shutdown -r" || echo "Нет активных задач перезапуска"
+}
+
 # Показать главное меню CLI
 show_menu() {
     print_logo
     echo -e "${WHITE}МЕНЮ НАСТРОЙКИ СЕРВЕРА:${NC}"
     echo ""
-    echo -e "${CYAN}1)${NC} Первичная настройка системы (обновления, утилиты, пользователь)"
-    echo -e "${CYAN}2)${NC} Установка домена и демо-страницы с SSL"
-    echo -e "${CYAN}3)${NC} Установка Docker"
-    echo -e "${CYAN}4)${NC} Установка 3X-UI"
-    echo -e "${CYAN}5)${NC} Настройка файрвола UFW"
-    echo -e "${CYAN}6)${NC} Копирование SSL сертификатов в /root/cert/"
-    echo -e "${CYAN}7)${NC} Полная настройка (опции 1-5)"
+    echo -e "${YELLOW}== Основные настройки ==${NC}"
+    echo -e "${CYAN}1)${NC} Первичная настройка системы"
+    echo -e "${CYAN}2)${NC} Настройка часового пояса"
+    echo -e "${CYAN}3)${NC} Настройка автоперезапуска сервера"
+    echo ""
+    echo -e "${YELLOW}== Веб и SSL ==${NC}"
+    echo -e "${CYAN}4)${NC} Установка домена и демо-страницы с SSL"
+    echo -e "${CYAN}5)${NC} Ручное обновление SSL сертификатов"
+    echo -e "${CYAN}6)${NC} Копирование SSL сертификатов"
+    echo ""
+    echo -e "${YELLOW}== Безопасность ==${NC}"
+    echo -e "${CYAN}7)${NC} Настройка файрвола UFW"
+    echo ""
+    echo -e "${YELLOW}== Приложения ==${NC}"
+    echo -e "${CYAN}8)${NC} Установка Docker"
+    echo -e "${CYAN}9)${NC} Установка 3X-UI"
+    echo ""
+    echo -e "${YELLOW}== Комплексная настройка ==${NC}"
+    echo -e "${CYAN}10)${NC} Полная настройка системы"
+    echo ""
     echo -e "${RED}0)${NC} Выход"
     echo ""
     echo -e "${YELLOW}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
@@ -776,28 +1066,47 @@ show_menu() {
     echo -e "┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"
     echo ""
     
-    read -p "Выберите опцию [0-7]: " choice
+    read -p "Выберите опцию [0-10]: " choice
     
     case $choice in
+        # Основные настройки
         1) initial_setup ;;
-        2) setup_domain ;;
-        3) install_docker ;;
-        4) install_3xui ;;
-        5) setup_ufw ;;
+        2) setup_timezone ;;
+        3) setup_auto_restart ;;
+        
+        # Веб и SSL
+        4) setup_domain ;;
+        5) manual_ssl_renewal ;;
         6) copy_ssl_certificates ;;
-        7) 
-           initial_setup
-           setup_domain
-           install_docker
-           install_3xui
-           setup_ufw
-           ;;
+        
+        # Безопасность
+        7) setup_ufw ;;
+        
+        # Приложения
+        8) install_docker ;;
+        9) install_3xui ;;
+        
+        # Комплексная настройка
+        10) 
+            print_message "Начинаем полную настройку системы..."
+            initial_setup
+            setup_timezone
+            setup_domain
+            install_docker
+            install_3xui
+            setup_ufw
+            setup_auto_restart
+            print_success "Полная настройка системы завершена!"
+            ;;
+        
+        # Выход
         0) 
-           clear
-           echo -e "${CYAN}Спасибо за использование MrCerber Network VPS Setup!${NC}"
-           echo ""
-           exit 0 
-           ;;
+            clear
+            echo -e "${CYAN}Спасибо за использование MrCerber Network VPS Setup!${NC}"
+            echo ""
+            exit 0 
+            ;;
+            
         *) print_error "Неверный выбор. Попробуйте снова." ;;
     esac
 }
