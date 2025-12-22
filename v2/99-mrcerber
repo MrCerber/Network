@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# ───── Colors (REAL ESC) ─────
+T=$'\e[38;5;45m'     # title
+L=$'\e[38;5;81m'     # label
+X=$'\e[38;5;252m'    # text
+DIM=$'\e[38;5;240m'
+OK=$'\e[38;5;82m'
+BAD=$'\e[38;5;196m'
+NI=$'\e[38;5;244m'   # not installed
+R=$'\e[0m'
+
+LOGO_FILE="/etc/update-motd.d/logo.txt"
+USER_NAME="${PAM_USER:-$USER}"
+
+# ───── Helpers ─────
+h()  { printf "\n%b%s%b\n" "$T" "$1:" "$R"; }
+kv() { printf "%b  %-12s%b %s%b\n" "$L" "$1" "$X" "$2" "$R"; }
+
+# Rainbow: 6 colors, Blue -> Cyan -> Green (salad)
+rainbow_logo() {
+  local colors=(33 39 45 51 82 118)
+  local i=0
+  while IFS= read -r line; do
+    printf "\e[38;5;%sm%s%b\n" "${colors[i]}" "$line" "$R"
+    i=$(( (i+1) % ${#colors[@]} ))
+  done
+}
+
+# Services: active / stopped / not installed
+svc() {
+  local name="$1"
+  local load_state
+  load_state="$(systemctl show -p LoadState --value "$name" 2>/dev/null)"
+
+  if [ -z "$load_state" ] || [ "$load_state" = "not-found" ]; then
+    printf "%bnot installed%b" "$NI" "$R"
+    return 0
+  fi
+
+  if systemctl is-active --quiet "$name" 2>/dev/null; then
+    printf "%bactive%b" "$OK" "$R"
+  else
+    printf "%bstopped%b" "$BAD" "$R"
+  fi
+}
+
+bar() {
+  local pct="$1" len="${2:-22}"
+  local filled=$(( pct * len / 100 ))
+  local empty=$(( len - filled ))
+  local out=""
+  for ((i=0;i<filled;i++)); do out+="█"; done
+  for ((i=0;i<empty;i++)); do out+="░"; done
+  printf "%s" "$out"
+}
+
+# ───── Fast system data ─────
+HOST=$(hostname)
+IP=$(hostname -I | awk '{print $1}')
+OS=$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,"",$2); print $2}' /etc/os-release 2>/dev/null)
+KERNEL=$(uname -r)
+UPTIME=$(uptime -p)
+
+# CPU (fast + VPS-safe cores calculation)
+CPU_MODEL=$(awk -F: '/model name/ {gsub(/^[ \t]+/,"",$2); print $2; exit}' /proc/cpuinfo 2>/dev/null)
+CPU_THREADS=$(nproc 2>/dev/null || echo 1)
+
+CPU_CORES=$(
+  awk '
+    /^physical id/ {p=$4}
+    /^core id/     {c=$4; k=p"-"c; if(!seen[k]++){cnt++}}
+    END { if(cnt>0) print cnt; else print "" }
+  ' /proc/cpuinfo 2>/dev/null
+)
+[ -z "$CPU_CORES" ] && CPU_CORES="$CPU_THREADS"
+[ "$CPU_CORES" -le 0 ] && CPU_CORES="$CPU_THREADS"
+
+# Load
+LOAD1=$(awk '{print $1}' /proc/loadavg)
+LOAD5=$(awk '{print $2}' /proc/loadavg)
+LOAD15=$(awk '{print $3}' /proc/loadavg)
+
+# normalized load (load1 per thread) + %
+LOAD_NORM=$(awk -v l="$LOAD1" -v c="$CPU_THREADS" 'BEGIN{printf "%.2f", (c>0? l/c : l)}')
+LOAD_PCT=$(awk -v n="$LOAD_NORM" 'BEGIN{p=n*100; if(p<0)p=0; printf "%.0f", p}')
+
+# Memory
+MEM_USED=$(free -h | awk '/Mem:/ {print $3}')
+MEM_TOTAL=$(free -h | awk '/Mem:/ {print $2}')
+
+# Last login (fast)
+LAST_LOGIN=$(
+  lastlog -u "$USER_NAME" 2>/dev/null | awk '
+    NR==2{
+      user=$1; from=$3;
+      $1=$2=$3="";
+      gsub(/^ +/,"");
+      if ($0 ~ /\*\*Never logged in\*\*/) {print user" never logged in"; exit}
+      print user" from "from" at " $0; exit
+    }'
+)
+
+# storage /
+DISK_PCT=$(df / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
+DISK_USED=$(df -h / | awk 'NR==2 {print $3}')
+DISK_TOTAL=$(df -h / | awk 'NR==2 {print $2}')
+DISK_BAR=$(bar "${DISK_PCT:-0}" 22)
+
+# updates (FAST only if apt-check exists)
+UPDATES_TOTAL="n/a"
+UPDATES_SEC="n/a"
+if [ -x /usr/lib/update-notifier/apt-check ]; then
+  IFS=';' read -r UPDATES_TOTAL UPDATES_SEC < <(/usr/lib/update-notifier/apt-check 2>/dev/null)
+fi
+
+# ───── Fail2ban stats ─────
+F2B_AVAILABLE=0
+F2B_CLIENT=""
+if command -v fail2ban-client >/dev/null 2>&1; then
+  F2B_CLIENT="fail2ban-client"
+  F2B_AVAILABLE=1
+elif [ -x /usr/bin/fail2ban-client ]; then
+  F2B_CLIENT="/usr/bin/fail2ban-client"
+  F2B_AVAILABLE=1
+fi
+
+F2B_JAILS=""
+F2B_SSHD_BANS=""
+F2B_SSHD_UNBANS=""
+F2B_SSHD_CURRENT=""
+F2B_SSHD_LT_BANS=""
+F2B_SSHD_LT_UNBANS=""
+F2B_SSHD_LT_CURRENT=""
+
+if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
+  F2B_JAILS="$($F2B_CLIENT status 2>/dev/null | awk -F': ' '/Jail list/ {print $2}' | tr -d ' ')"
+
+  f2b_counters() {
+    $F2B_CLIENT status "$1" 2>/dev/null | awk -F': ' '
+      /Currently banned/ {cb=$2}
+      /Total banned/ {tb=$2}
+      /Total unbanned/ {tu=$2}
+      END {print tb ";" tu ";" cb}
+    '
+  }
+
+  if printf "%s" "$F2B_JAILS" | grep -qw "sshd"; then
+    IFS=';' read -r F2B_SSHD_BANS F2B_SSHD_UNBANS F2B_SSHD_CURRENT < <(f2b_counters sshd)
+  fi
+
+  for jail in sshd-longterm sshd-longterm-ban sshd-ddos; do
+    if printf "%s" "$F2B_JAILS" | grep -qw "$jail"; then
+      IFS=';' read -r F2B_SSHD_LT_BANS F2B_SSHD_LT_UNBANS F2B_SSHD_LT_CURRENT < <(f2b_counters "$jail")
+      break
+    fi
+  done
+fi
+
+# ───── Output ─────
+echo
+if [ -f "$LOGO_FILE" ]; then
+  rainbow_logo < "$LOGO_FILE"
+  echo
+fi
+
+h "System"
+kv "Host"       "$HOST"
+kv "IP"         "$IP"
+kv "OS"         "${OS:-unknown}"
+kv "Kernel"     "$KERNEL"
+kv "Uptime"     "$UPTIME"
+kv "CPU"        "${CPU_MODEL:-unknown}  ${DIM}(${CPU_CORES} cores / ${CPU_THREADS} threads)${R}"
+kv "Load"       "${LOAD1} / ${LOAD5} / ${LOAD15}  ${DIM}(1m/5m/15m)${R}"
+kv "Load%"      "${LOAD_PCT}%  ${DIM}(normalized: ${LOAD_NORM} per thread)${R}"
+kv "RAM"        "${MEM_USED} / ${MEM_TOTAL}"
+kv "Last Login" "${LAST_LOGIN:-unknown}"
+
+h "Storage"
+kv "Disk /" "[${DISK_BAR}]  ${DISK_PCT}%  ${DIM}(${DISK_USED}/${DISK_TOTAL})${R}"
+
+h "Services"
+printf "%b  %-10s%b %b    %b%-10s%b %b    %b%-6s%b %b%b\n" \
+  "$L" "docker:"   "$R" "$(svc docker)" \
+  "$L" "fail2ban:" "$R" "$(svc fail2ban)" \
+  "$L" "ufw:"      "$R" "$(svc ufw)" "$R"
+echo
+
+h "Fail2ban"
+if [ "$F2B_AVAILABLE" -eq 0 ]; then
+  kv "Status" "${NI}not installed${R}"
+elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
+  kv "Status" "${BAD}stopped${R}"
+else
+  kv "Jails" "${F2B_JAILS:-unknown}"
+  if [ -n "$F2B_SSHD_BANS" ]; then
+    printf "%b  %-14s%b %b%s%b bans  %b%s%b unbans  %b%s%b active\n" \
+      "$L" "sshd" "$R" \
+      "$X" "$F2B_SSHD_BANS" "$R" \
+      "$X" "$F2B_SSHD_UNBANS" "$R" \
+      "$X" "$F2B_SSHD_CURRENT" "$R"
+  fi
+  if [ -n "$F2B_SSHD_LT_BANS" ]; then
+    LT_NAME="$(printf "%s" "$F2B_JAILS" | tr ',' ' ' | awk '{for(i=1;i<=NF;i++) if($i ~ /^sshd-longterm/ || $i=="sshd-ddos") {print $i; exit}}')"
+    [ -z "$LT_NAME" ] && LT_NAME="sshd-longterm"
+    printf "%b  %-14s%b %b%s%b bans  %b%s%b unbans  %b%s%b active\n" \
+      "$L" "$LT_NAME" "$R" \
+      "$X" "$F2B_SSHD_LT_BANS" "$R" \
+      "$X" "$F2B_SSHD_LT_UNBANS" "$R" \
+      "$X" "$F2B_SSHD_LT_CURRENT" "$R"
+  fi
+  if [ -z "$F2B_SSHD_BANS" ] && [ -z "$F2B_SSHD_LT_BANS" ]; then
+    kv "Info" "${DIM}No sshd jail stats found${R}"
+  fi
+fi
+echo
+
+h "Updates"
+if [ "$UPDATES_TOTAL" = "n/a" ]; then
+  kv "Status" "${DIM}n/a (install update-notifier-common for fast counts)${R}"
+else
+  if [ "${UPDATES_TOTAL:-0}" -eq 0 ]; then
+    kv "Status" "${OK}System is up to date${R}"
+  else
+    kv "Total"    "$UPDATES_TOTAL"
+    kv "Security" "$UPDATES_SEC"
+    kv "Hint"     "${DIM}Run: apt update && apt upgrade -y${R}"
+  fi
+fi
+echo
