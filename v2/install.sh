@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 # MrCerber - New Server Bootstrap (Ubuntu/Debian)
 # Requirements:
-#   - MUST be run as root
-#   - SSH keys already installed for root (assumed)
-#   - NO user creation, NO timezone changes, NO swap changes
+# - MUST be run as root
+# - SSH keys already installed for root (assumed)
+# - NO user creation, NO timezone changes, NO swap changes
 #
 # Features:
-#   - Interactive main menu + sub menus (UFW / Fail2ban)
-#   - Base packages install
-#   - Automatic security updates (unattended-upgrades)
-#   - Disable default MOTD + disable SSH "Last login"
-#   - Install custom MOTD from two files: 99-mrcerber and logo.txt
-#   - Restore default MOTD + restore "Last login"
+# - Interactive main menu + sub menus (UFW / Fail2ban)
+# - Base packages install
+# - Automatic security updates (unattended-upgrades)
+# - Disable default MOTD + disable SSH "Last login"
+# - Install custom MOTD from two files: 99-mrcerber and logo.txt
+# - Restore default MOTD + restore "Last login"
 #
 # How custom MOTD works:
-#   Place your custom files next to this script:
-#     ./99-mrcerber
-#     ./logo.txt
-#   Script installs them into:
-#     /etc/update-motd.d/99-mrcerber
-#     /etc/update-motd.d/logo.txt
-#
+# Place your custom files next to this script:
+# ./99-mrcerber
+# ./logo.txt
+# Script installs them into:
+# /etc/update-motd.d/99-mrcerber
+# /etc/update-motd.d/logo.txt
+
 set -Eeuo pipefail
 
 # ---------------------------
@@ -33,6 +33,17 @@ CUSTOM_MOTD_LOGO_SRC="${SCRIPT_DIR}/logo.txt"
 MOTD_DIR="/etc/update-motd.d"
 BACKUP_DIR="/root/.mrcerber-bootstrap-backups"
 SSHD_CONFIG="/etc/ssh/sshd_config"
+
+# ---------------------------
+# Oh My Posh globals
+# ---------------------------
+OMP_DIR="/root/.config/oh-my-posh"
+OMP_THEME_QUICK="${OMP_DIR}/quick-term.omp.json"
+OMP_THEME_QUICK_URL="https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/refs/heads/main/themes/quick-term.omp.json"
+OMP_BASHRC="/root/.bashrc"
+
+# we keep the init line consistent and easy to match/remove
+OMP_INIT_LINE='eval "$(oh-my-posh init bash --config /root/.config/oh-my-posh/quick-term.omp.json)"'
 
 # ---------------------------
 # UI helpers
@@ -124,7 +135,8 @@ APT::Periodic::AutocleanInterval "7";
 APT::Periodic::Unattended-Upgrade "1";
 EOF
 
-  # Keep this conservative (security + important updates). You can extend as needed.
+  # Keep this conservative (security + important updates).
+  # You can extend as needed.
   cat > /etc/apt/apt.conf.d/50unattended-upgrades <<'EOF'
 Unattended-Upgrade::Allowed-Origins {
         "${distro_id}:${distro_codename}";
@@ -380,7 +392,6 @@ ufw_menu() {
 fail2ban_install_enable() {
   say "Installing/ensuring Fail2ban..."
   DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban
-
   systemctl enable --now fail2ban
   say "Fail2ban enabled."
 }
@@ -457,6 +468,144 @@ fail2ban_menu() {
 }
 
 # ---------------------------
+# Oh My Posh menu (NEW)
+# ---------------------------
+
+ensure_local_bin_in_path() {
+  local bashrc="/root/.bashrc"
+  local local_bin="/root/.local/bin"
+
+  # Only act if the directory exists
+  [[ -d "$local_bin" ]] || return 0
+
+  # If PATH already contains it in current session – fine
+  if [[ ":$PATH:" == *":$local_bin:"* ]]; then
+    return 0
+  fi
+
+  # If bashrc already exports it – fine
+  if grep -qE '(^|:)/root/\.local/bin($|:)' "$bashrc" 2>/dev/null; then
+    return 0
+  fi
+
+  # Append safely
+  {
+    echo ""
+    echo "# Ensure local user bin is in PATH"
+    echo 'export PATH="$PATH:/root/.local/bin"'
+  } >> "$bashrc"
+}
+
+omp_is_installed() {
+  has_cmd oh-my-posh
+}
+
+omp_install() {
+  say "Installing Oh My Posh..."
+  if ! omp_is_installed; then
+    curl -s https://ohmyposh.dev/install.sh | bash -s -- -d /usr/local/bin
+  fi
+  mkdir -p "${OMP_DIR}"
+  say "Downloading theme: quick-term..."
+  curl -fsSL "${OMP_THEME_QUICK_URL}" -o "${OMP_THEME_QUICK}"
+  say "Oh My Posh installed."
+}
+
+omp_font_install_meslo() {
+  if ! omp_is_installed; then
+    die "Oh My Posh is not installed."
+  fi
+  say "Installing Meslo font using Oh My Posh..."
+  oh-my-posh font install meslo
+}
+
+omp_enable_bash() {
+  ensure_local_bin_in_path
+
+  if ! command -v oh-my-posh >/dev/null 2>&1; then
+    die "oh-my-posh command not found in PATH"
+  fi
+
+  backup_file "/root/.bashrc"
+
+  # Remove any existing Oh My Posh init lines
+  sed -i '/oh-my-posh init bash/d' /root/.bashrc
+
+  cat >> /root/.bashrc <<EOF
+
+# Oh My Posh
+eval "\$(oh-my-posh init bash --config /root/.config/oh-my-posh/quick-term.omp.json)"
+EOF
+
+  say "Oh My Posh enabled for bash. Re-login required."
+}
+
+
+omp_disable_bash() {
+  backup_file "${OMP_BASHRC}"
+  sed -i '/oh-my-posh init bash/d' "${OMP_BASHRC}"
+  say "Oh My Posh disabled for bash. Re-login to apply."
+}
+
+omp_remove() {
+  confirm "This will remove Oh My Posh and its config. Continue? [y/N]: " || return 0
+  omp_disable_bash
+  rm -f /usr/local/bin/oh-my-posh
+  rm -rf "${OMP_DIR}"
+  say "Oh My Posh removed."
+}
+
+omp_status() {
+  if omp_is_installed; then
+    say "Oh My Posh: INSTALLED"
+    oh-my-posh version || true
+  else
+    say "Oh My Posh: NOT installed"
+  fi
+
+  if [[ -f "${OMP_THEME_QUICK}" ]]; then
+    say "Theme: quick-term (present)"
+  else
+    say "Theme: quick-term (missing)"
+  fi
+
+  if grep -q "oh-my-posh init bash" "${OMP_BASHRC}" 2>/dev/null; then
+    say "Bash integration: ENABLED"
+  else
+    say "Bash integration: DISABLED"
+  fi
+}
+
+oh_my_posh_menu() {
+  while true; do
+    clear
+    say "Oh My Posh Menu"
+    say "================================"
+    say "1) Status"
+    say "2) Install Oh My Posh"
+    say "3) Download quick-term theme"
+    say "4) Enable in bash (.bashrc)"
+    say "5) Disable in bash (.bashrc)"
+    say "6) Font install: Meslo (oh-my-posh font install meslo)"
+    say "7) Remove Oh My Posh (clean)"
+    say "0) Back"
+    say ""
+    read -r -p "Select: " c
+    case "$c" in
+      1) omp_status; pause ;;
+      2) omp_install; pause ;;
+      3) mkdir -p "${OMP_DIR}"; curl -fsSL "${OMP_THEME_QUICK_URL}" -o "${OMP_THEME_QUICK}"; say "Theme downloaded."; pause ;;
+      4) omp_enable_bash; pause ;;
+      5) omp_disable_bash; pause ;;
+      6) omp_font_install_meslo; pause ;;
+      7) omp_remove; pause ;;
+      0) break ;;
+      *) warn "Invalid choice."; pause ;;
+    esac
+  done
+}
+
+# ---------------------------
 # Main menu actions
 # ---------------------------
 full_base_setup() {
@@ -483,6 +632,7 @@ main_menu() {
     say "7) Preview MOTD output"
     say "8) UFW submenu"
     say "9) Fail2ban submenu"
+    say "10) Oh My Posh submenu"
     say "0) Exit"
     say ""
     read -r -p "Select: " choice
@@ -496,6 +646,7 @@ main_menu() {
       7) preview_motd; pause ;;
       8) ufw_menu ;;
       9) fail2ban_menu ;;
+      10) oh_my_posh_menu ;;
       0) exit 0 ;;
       *) warn "Invalid choice."; pause ;;
     esac
