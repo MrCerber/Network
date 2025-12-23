@@ -18,7 +18,7 @@
 ## Быстрый запуск (удаленно)
 
 ```bash
-sudo bash <(curl -Ls https://raw.githubusercontent.com/MrCerber/Network/refs/heads/main/v2/install.sh)
+curl -Ls https://raw.githubusercontent.com/MrCerber/Network/refs/heads/main/v2/install.sh | sudo bash
 ```
 
 ## Запуск локально
