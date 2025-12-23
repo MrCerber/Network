@@ -14,11 +14,10 @@ LOGO_FILE="/etc/update-motd.d/logo.txt"
 USER_NAME="${PAM_USER:-$USER}"
 
 is_utf8() {
-  local loc="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
-  case "$loc" in
-    *UTF-8*|*utf8*) return 0 ;;
-    *) return 1 ;;
-  esac
+  if [[ "${MOTD_ASCII:-0}" == "1" ]]; then
+    return 1
+  fi
+  return 0
 }
 
 COLS="$(tput cols 2>/dev/null || echo 80)"
@@ -36,9 +35,9 @@ LABEL_W=12
 
 BAR_FULL="#"
 BAR_EMPTY="."
-SVC_OK="*"
-SVC_BAD="x"
-SVC_NI="-"
+SVC_OK="o"
+SVC_BAD="o"
+SVC_NI="o"
 if is_utf8; then
   BAR_FULL=$'\u2588'
   BAR_EMPTY=$'\u2591'
