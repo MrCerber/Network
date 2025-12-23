@@ -159,56 +159,22 @@ fi
 F2B_STATUS=""
 F2B_JAILS_RAW=""
 F2B_JAILS=""
-F2B_JAIL_NAMES=()
-F2B_BANS=()
-F2B_UNBANS=()
-F2B_ACTIVE=()
-F2B_NUM_W=5
 F2B_JAILS_DISPLAY=""
+
+f2b_counters() {
+  $F2B_CLIENT status "$1" 2>/dev/null | awk -F': *' '
+    /Currently banned/ {cb=$2}
+    /Total banned/ {tb=$2}
+    /Total unbanned/ {tu=$2}
+    END {print tb ";" tu ";" cb}
+  '
+}
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
   F2B_STATUS="$($F2B_CLIENT status 2>/dev/null || true)"
   if [ -n "$F2B_STATUS" ]; then
     F2B_JAILS_RAW="$(printf "%s\n" "$F2B_STATUS" | sed -n 's/.*Jail list:[[:space:]]*//p' | tr -d '\r')"
     F2B_JAILS="$(printf "%s" "$F2B_JAILS_RAW" | tr -d '[:space:]')"
-  fi
-
-  f2b_counters_from_raw() {
-    printf "%s\n" "$1" | awk -F': *' '
-      /Currently banned/ {cb=$2}
-      /Total banned/ {tb=$2}
-      /Total unbanned/ {tu=$2}
-      END {print tb ";" tu ";" cb}
-    '
-  }
-
-  F2B_JAIL_LIST=()
-  if [ -n "$F2B_JAILS" ]; then
-    IFS=',' read -r -a F2B_JAIL_LIST <<< "$F2B_JAILS"
-  fi
-
-  if [ "${#F2B_JAIL_LIST[@]}" -gt 0 ]; then
-    for jail in "${F2B_JAIL_LIST[@]}"; do
-      [ -n "$jail" ] || continue
-      F2B_JAIL_RAW="$($F2B_CLIENT status "$jail" 2>/dev/null || true)"
-      if ! printf "%s" "$F2B_JAIL_RAW" | grep -q "Status for the jail"; then
-        continue
-      fi
-      IFS=';' read -r tb tu cb < <(f2b_counters_from_raw "$F2B_JAIL_RAW")
-      if [ -z "$tb" ] && [ -z "$cb" ]; then
-        continue
-      fi
-      F2B_JAIL_NAMES+=( "$jail" )
-      F2B_BANS+=( "${tb:-0}" )
-      F2B_UNBANS+=( "$tu" )
-      F2B_ACTIVE+=( "${cb:-0}" )
-    done
-  fi
-  if [ -z "$F2B_JAILS_RAW" ] && [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
-    F2B_JAILS_RAW="${F2B_JAIL_NAMES[0]}"
-    for ((i=1;i<${#F2B_JAIL_NAMES[@]};i++)); do
-      F2B_JAILS_RAW+=", ${F2B_JAIL_NAMES[$i]}"
-    done
   fi
 fi
 
@@ -247,19 +213,26 @@ elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
 else
   F2B_JAILS_DISPLAY="${F2B_JAILS_RAW:-unknown}"
   kv "Jails" "$F2B_JAILS_DISPLAY"
-  if [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
-    for i in "${!F2B_JAIL_NAMES[@]}"; do
-      jail="${F2B_JAIL_NAMES[$i]}"
-      tb="${F2B_BANS[$i]:-0}"
-      tu="${F2B_UNBANS[$i]:-0}"
-      cb="${F2B_ACTIVE[$i]:-0}"
-      tb_pad=$(printf "%*s" "$F2B_NUM_W" "$tb")
-      tu_pad=$(printf "%*s" "$F2B_NUM_W" "$tu")
-      cb_pad=$(printf "%*s" "$F2B_NUM_W" "$cb")
-      kv "$jail" "${DIM}bans${R} ${X}${tb_pad}${R}  ${DIM}unbans${R} ${X}${tu_pad}${R}  ${DIM}active${R} ${X}${cb_pad}${R}"
+  if [ -n "$F2B_JAILS" ]; then
+    IFS=',' read -r -a F2B_JAIL_LIST <<< "$F2B_JAILS"
+    for jail in "${F2B_JAIL_LIST[@]}"; do
+      [ -n "$jail" ] || continue
+      IFS=';' read -r tb tu cb < <(f2b_counters "$jail")
+      [ -n "$tb" ] || tb=0
+      [ -n "$tu" ] || tu=0
+      [ -n "$cb" ] || cb=0
+      kv "$jail" "${DIM}bans${R}=${X}${tb}${R} ${DIM}unbans${R}=${X}${tu}${R} ${DIM}active${R}=${X}${cb}${R}"
     done
   else
-    kv "Info" "${DIM}No jail stats found${R}"
+    IFS=';' read -r tb tu cb < <(f2b_counters sshd)
+    if [ -n "$tb" ] || [ -n "$cb" ]; then
+      [ -n "$tb" ] || tb=0
+      [ -n "$tu" ] || tu=0
+      [ -n "$cb" ] || cb=0
+      kv "sshd" "${DIM}bans${R}=${X}${tb}${R} ${DIM}unbans${R}=${X}${tu}${R} ${DIM}active${R}=${X}${cb}${R}"
+    else
+      kv "Info" "${DIM}No jail stats found${R}"
+    fi
   fi
 fi
 echo
