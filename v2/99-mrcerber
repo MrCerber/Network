@@ -149,7 +149,10 @@ F2B_SSHD_LT_UNBANS=""
 F2B_SSHD_LT_CURRENT=""
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
-  F2B_JAILS="$($F2B_CLIENT status 2>/dev/null | awk -F': ' '/Jail list/ {print $2}' | tr -d ' ')"
+  F2B_STATUS="$($F2B_CLIENT status 2>/dev/null || true)"
+  if [ -n "$F2B_STATUS" ]; then
+    F2B_JAILS="$(printf "%s\n" "$F2B_STATUS" | sed -n 's/.*Jail list:[[:space:]]*//p' | tr -d '\r' | tr -d ' ')"
+  fi
 
   f2b_counters() {
     $F2B_CLIENT status "$1" 2>/dev/null | awk -F': ' '
@@ -160,12 +163,20 @@ if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/nul
     '
   }
 
-  if printf "%s" "$F2B_JAILS" | grep -qw "sshd"; then
+  f2b_has_jail() {
+    if [ -n "$F2B_JAILS" ]; then
+      printf "%s" "$F2B_JAILS" | tr ',' ' ' | grep -qw "$1"
+    else
+      $F2B_CLIENT status "$1" >/dev/null 2>&1
+    fi
+  }
+
+  if f2b_has_jail sshd; then
     IFS=';' read -r F2B_SSHD_BANS F2B_SSHD_UNBANS F2B_SSHD_CURRENT < <(f2b_counters sshd)
   fi
 
   for jail in sshd-longterm sshd-longterm-ban sshd-ddos; do
-    if printf "%s" "$F2B_JAILS" | grep -qw "$jail"; then
+    if f2b_has_jail "$jail"; then
       IFS=';' read -r F2B_SSHD_LT_BANS F2B_SSHD_LT_UNBANS F2B_SSHD_LT_CURRENT < <(f2b_counters "$jail")
       break
     fi
