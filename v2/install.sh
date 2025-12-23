@@ -73,7 +73,7 @@ backup_file() {
   [[ -f "$f" ]] || return 0
   local ts
   ts="$(date +%Y%m%d-%H%M%S)"
-  local dest="${BACKUP_DIR}$(echo "$f" | sed 's#/#__#g').${ts}.bak"
+  local dest="${BACKUP_DIR}/$(echo "$f" | sed 's#/#__#g').${ts}.bak"
   cp -a "$f" "$dest"
 }
 
@@ -318,7 +318,9 @@ ufw_allow_http_https() {
 
 ufw_allow_custom() {
   read -r -p "Enter port (e.g., 8443): " port
-  [[ "$port" =~ ^[0-9]{1,5}$ ]] || die "Invalid port."
+  if ! [[ "$port" =~ ^[0-9]{1,5}$ ]] || (( port < 1 || port > 65535 )); then
+    die "Invalid port."
+  fi
   read -r -p "Protocol (tcp/udp/both) [tcp]: " proto
   proto="${proto:-tcp}"
   case "${proto,,}" in
@@ -398,6 +400,10 @@ fail2ban_install_enable() {
 
 fail2ban_write_jail_local() {
   say "Writing /etc/fail2ban/jail.local (SSH protection)..."
+  if [[ ! -d /etc/fail2ban ]]; then
+    warn "Fail2ban not installed. Use 'Install + enable Fail2ban' first."
+    return 0
+  fi
   backup_file "/etc/fail2ban/jail.local"
 
   cat > /etc/fail2ban/jail.local <<'EOF'
@@ -426,8 +432,10 @@ port     = ssh
 logpath  = %(sshd_log)s
 EOF
 
-  systemctl restart fail2ban
-  say "jail.local written and Fail2ban restarted."
+  if ! systemctl restart fail2ban >/dev/null 2>&1; then
+    warn "Fail2ban restart failed. Ensure it is installed and enabled."
+  fi
+  say "jail.local written."
 }
 
 fail2ban_status() {
@@ -471,31 +479,6 @@ fail2ban_menu() {
 # Oh My Posh menu (NEW)
 # ---------------------------
 
-ensure_local_bin_in_path() {
-  local bashrc="/root/.bashrc"
-  local local_bin="/root/.local/bin"
-
-  # Only act if the directory exists
-  [[ -d "$local_bin" ]] || return 0
-
-  # If PATH already contains it in current session – fine
-  if [[ ":$PATH:" == *":$local_bin:"* ]]; then
-    return 0
-  fi
-
-  # If bashrc already exports it – fine
-  if grep -qE '(^|:)/root/\.local/bin($|:)' "$bashrc" 2>/dev/null; then
-    return 0
-  fi
-
-  # Append safely
-  {
-    echo ""
-    echo "# Ensure local user bin is in PATH"
-    echo 'export PATH="$PATH:/root/.local/bin"'
-  } >> "$bashrc"
-}
-
 omp_is_installed() {
   has_cmd oh-my-posh
 }
@@ -520,29 +503,30 @@ omp_font_install_meslo() {
 }
 
 omp_enable_bash() {
-  ensure_local_bin_in_path
-
-  if ! command -v oh-my-posh >/dev/null 2>&1; then
-    die "oh-my-posh command not found in PATH"
+  if ! omp_is_installed; then
+    die "Oh My Posh is not installed."
   fi
+  mkdir -p "${OMP_DIR}"
+  [[ -f "${OMP_THEME_QUICK}" ]] || curl -fsSL "${OMP_THEME_QUICK_URL}" -o "${OMP_THEME_QUICK}"
 
-  backup_file "/root/.bashrc"
+  backup_file "${OMP_BASHRC}"
+  [[ -f "${OMP_BASHRC}" ]] || touch "${OMP_BASHRC}"
 
-  # Remove any existing Oh My Posh init lines
-  sed -i '/oh-my-posh init bash/d' /root/.bashrc
+  # remove any previous oh-my-posh init lines (keeps file clean)
+  sed -i '/oh-my-posh init bash/d' "${OMP_BASHRC}"
 
-  cat >> /root/.bashrc <<EOF
+  cat >> "${OMP_BASHRC}" <<EOF
 
 # Oh My Posh
-eval "\$(oh-my-posh init bash --config /root/.config/oh-my-posh/quick-term.omp.json)"
+${OMP_INIT_LINE}
 EOF
 
-  say "Oh My Posh enabled for bash. Re-login required."
+  say "Oh My Posh enabled for bash. Re-login to apply."
 }
-
 
 omp_disable_bash() {
   backup_file "${OMP_BASHRC}"
+  [[ -f "${OMP_BASHRC}" ]] || return 0
   sed -i '/oh-my-posh init bash/d' "${OMP_BASHRC}"
   say "Oh My Posh disabled for bash. Re-login to apply."
 }

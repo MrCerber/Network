@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ───── Colors (REAL ESC) ─────
+# ----- Colors (REAL ESC) -----
 T=$'\e[38;5;45m'     # title
 L=$'\e[38;5;81m'     # label
 X=$'\e[38;5;252m'    # text
@@ -13,7 +13,22 @@ R=$'\e[0m'
 LOGO_FILE="/etc/update-motd.d/logo.txt"
 USER_NAME="${PAM_USER:-$USER}"
 
-# ───── Helpers ─────
+is_utf8() {
+  local loc="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+  case "$loc" in
+    *UTF-8*|*utf8*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+BAR_FULL="#"
+BAR_EMPTY="-"
+if is_utf8; then
+  BAR_FULL=$'\u2588'
+  BAR_EMPTY=$'\u2591'
+fi
+
+# ----- Helpers -----
 h()  { printf "\n%b%s%b\n" "$T" "$1:" "$R"; }
 kv() { printf "%b  %-12s%b %s%b\n" "$L" "$1" "$X" "$2" "$R"; }
 
@@ -50,12 +65,12 @@ bar() {
   local filled=$(( pct * len / 100 ))
   local empty=$(( len - filled ))
   local out=""
-  for ((i=0;i<filled;i++)); do out+="█"; done
-  for ((i=0;i<empty;i++)); do out+="░"; done
+  for ((i=0;i<filled;i++)); do out+="${BAR_FULL}"; done
+  for ((i=0;i<empty;i++)); do out+="${BAR_EMPTY}"; done
   printf "%s" "$out"
 }
 
-# ───── Fast system data ─────
+# ----- Fast system data -----
 HOST=$(hostname)
 IP=$(hostname -I | awk '{print $1}')
 OS=$(awk -F= '/^PRETTY_NAME=/{gsub(/"/,"",$2); print $2}' /etc/os-release 2>/dev/null)
@@ -114,7 +129,7 @@ if [ -x /usr/lib/update-notifier/apt-check ]; then
   IFS=';' read -r UPDATES_TOTAL UPDATES_SEC < <(/usr/lib/update-notifier/apt-check 2>/dev/null)
 fi
 
-# ───── Fail2ban stats ─────
+# ----- Fail2ban stats -----
 F2B_AVAILABLE=0
 F2B_CLIENT=""
 if command -v fail2ban-client >/dev/null 2>&1; then
@@ -157,7 +172,7 @@ if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/nul
   done
 fi
 
-# ───── Output ─────
+# ----- Output -----
 echo
 if [ -f "$LOGO_FILE" ]; then
   rainbow_logo < "$LOGO_FILE"
