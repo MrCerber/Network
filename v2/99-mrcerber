@@ -163,12 +163,6 @@ F2B_JAIL_NAMES=()
 F2B_BANS=()
 F2B_UNBANS=()
 F2B_ACTIVE=()
-F2B_HAS_UNBANS=0
-F2B_W_JAIL=4
-F2B_W_BANS=4
-F2B_W_UNBANS=6
-F2B_W_ACTIVE=6
-F2B_JAIL_MAX=18
 F2B_JAILS_DISPLAY=""
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
@@ -207,21 +201,6 @@ if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/nul
       F2B_BANS+=( "${tb:-0}" )
       F2B_UNBANS+=( "$tu" )
       F2B_ACTIVE+=( "${cb:-0}" )
-      if [ -n "$tu" ]; then
-        F2B_HAS_UNBANS=1
-        if [ "${#tu}" -gt "$F2B_W_UNBANS" ]; then
-          F2B_W_UNBANS="${#tu}"
-        fi
-      fi
-      if [ "${#jail}" -gt "$F2B_W_JAIL" ]; then
-        F2B_W_JAIL="${#jail}"
-      fi
-      if [ "${#tb}" -gt "$F2B_W_BANS" ]; then
-        F2B_W_BANS="${#tb}"
-      fi
-      if [ "${#cb}" -gt "$F2B_W_ACTIVE" ]; then
-        F2B_W_ACTIVE="${#cb}"
-      fi
     done
   fi
   if [ -z "$F2B_JAILS_RAW" ] && [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
@@ -268,52 +247,15 @@ else
   F2B_JAILS_DISPLAY="${F2B_JAILS_RAW:-unknown}"
   kv "Jails" "$F2B_JAILS_DISPLAY"
   if [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
-    if [ "$F2B_W_JAIL" -lt 8 ]; then
-      F2B_W_JAIL=8
-    elif [ "$F2B_W_JAIL" -gt "$F2B_JAIL_MAX" ]; then
-      F2B_W_JAIL="$F2B_JAIL_MAX"
-    fi
-    if [ "$F2B_W_BANS" -lt 4 ]; then
-      F2B_W_BANS=4
-    fi
-    if [ "$F2B_W_ACTIVE" -lt 6 ]; then
-      F2B_W_ACTIVE=6
-    fi
-    if [ "$F2B_HAS_UNBANS" -eq 1 ] && [ "$F2B_W_UNBANS" -lt 6 ]; then
-      F2B_W_UNBANS=6
-    fi
-    if [ "$F2B_HAS_UNBANS" -eq 1 ]; then
-      printf "%b  %-*s%b %b%*s%b %b%*s%b %b%*s%b\n" \
-        "$DIM" "$F2B_W_JAIL" "Jail" "$R" \
-        "$DIM" "$F2B_W_BANS" "Bans" "$R" \
-        "$DIM" "$F2B_W_UNBANS" "Unbans" "$R" \
-        "$DIM" "$F2B_W_ACTIVE" "Active" "$R"
-    else
-      printf "%b  %-*s%b %b%*s%b %b%*s%b\n" \
-        "$DIM" "$F2B_W_JAIL" "Jail" "$R" \
-        "$DIM" "$F2B_W_BANS" "Bans" "$R" \
-        "$DIM" "$F2B_W_ACTIVE" "Active" "$R"
-    fi
     for i in "${!F2B_JAIL_NAMES[@]}"; do
       jail="${F2B_JAIL_NAMES[$i]}"
-      if [ "${#jail}" -gt "$F2B_W_JAIL" ]; then
-        jail="${jail:0:$((F2B_W_JAIL-1))}."
-      fi
       tb="${F2B_BANS[$i]}"
       tu="${F2B_UNBANS[$i]}"
       cb="${F2B_ACTIVE[$i]}"
-      if [ "$F2B_HAS_UNBANS" -eq 1 ]; then
-        [ -n "$tu" ] || tu="-"
-        printf "%b  %-*s%b %b%*s%b %b%*s%b %b%*s%b\n" \
-          "$L" "$F2B_W_JAIL" "$jail" "$R" \
-          "$X" "$F2B_W_BANS" "$tb" "$R" \
-          "$X" "$F2B_W_UNBANS" "$tu" "$R" \
-          "$X" "$F2B_W_ACTIVE" "$cb" "$R"
+      if [ -n "$tu" ]; then
+        kv "$jail" "${X}bans${R} ${tb:-0}  ${X}unbans${R} ${tu}  ${X}active${R} ${cb:-0}"
       else
-        printf "%b  %-*s%b %b%*s%b %b%*s%b\n" \
-          "$L" "$F2B_W_JAIL" "$jail" "$R" \
-          "$X" "$F2B_W_BANS" "$tb" "$R" \
-          "$X" "$F2B_W_ACTIVE" "$cb" "$R"
+        kv "$jail" "${X}bans${R} ${tb:-0}  ${X}active${R} ${cb:-0}"
       fi
     done
   else
