@@ -33,8 +33,8 @@ fi
 RULE_LINE="$(printf '%*s' "$RULE_WIDTH" '' | tr ' ' '-')"
 LABEL_W=12
 
-BAR_FULL="#"
-BAR_EMPTY="."
+BAR_FULL="="
+BAR_EMPTY="="
 SVC_OK="o"
 SVC_BAD="o"
 SVC_NI="o"
