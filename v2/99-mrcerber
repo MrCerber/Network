@@ -21,6 +21,19 @@ is_utf8() {
   esac
 }
 
+COLS="$(tput cols 2>/dev/null || echo 80)"
+if ! [[ "$COLS" =~ ^[0-9]+$ ]]; then
+  COLS=80
+fi
+RULE_WIDTH="$COLS"
+if (( RULE_WIDTH > 60 )); then
+  RULE_WIDTH=60
+elif (( RULE_WIDTH < 30 )); then
+  RULE_WIDTH=30
+fi
+RULE_LINE="$(printf '%*s' "$RULE_WIDTH" '' | tr ' ' '-')"
+LABEL_W=12
+
 BAR_FULL="#"
 BAR_EMPTY="-"
 if is_utf8; then
@@ -29,8 +42,11 @@ if is_utf8; then
 fi
 
 # ----- Helpers -----
-h()  { printf "\n%b%s%b\n" "$T" "$1:" "$R"; }
-kv() { printf "%b  %-12s%b %s%b\n" "$L" "$1" "$X" "$2" "$R"; }
+h() {
+  printf "\n%b%s%b\n" "$T" "$1" "$R"
+  printf "%b%s%b\n" "$DIM" "$RULE_LINE" "$R"
+}
+kv() { printf "%b  %-*s%b %s%b\n" "$L" "$LABEL_W" "$1" "$R" "$2" "$R"; }
 
 # Rainbow: 6 colors, Blue -> Cyan -> Green (salad)
 rainbow_logo() {
@@ -148,6 +164,7 @@ F2B_BANS=()
 F2B_UNBANS=()
 F2B_ACTIVE=()
 F2B_JAIL_WIDTH=4
+F2B_JAILS_DISPLAY=""
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
   F2B_STATUS="$($F2B_CLIENT status 2>/dev/null || true)"
@@ -190,6 +207,12 @@ if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/nul
       fi
     done
   fi
+  if [ -z "$F2B_JAILS_RAW" ] && [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
+    F2B_JAILS_RAW="${F2B_JAIL_NAMES[0]}"
+    for ((i=1;i<${#F2B_JAIL_NAMES[@]};i++)); do
+      F2B_JAILS_RAW+=", ${F2B_JAIL_NAMES[$i]}"
+    done
+  fi
 fi
 
 # ----- Output -----
@@ -215,11 +238,9 @@ h "Storage"
 kv "Disk /" "[${DISK_BAR}]  ${DISK_PCT}%  ${DIM}(${DISK_USED}/${DISK_TOTAL})${R}"
 
 h "Services"
-printf "%b  %-10s%b %b    %b%-10s%b %b    %b%-6s%b %b%b\n" \
-  "$L" "docker:"   "$R" "$(svc docker)" \
-  "$L" "fail2ban:" "$R" "$(svc fail2ban)" \
-  "$L" "ufw:"      "$R" "$(svc ufw)" "$R"
-echo
+kv "docker"   "$(svc docker)"
+kv "fail2ban" "$(svc fail2ban)"
+kv "ufw"      "$(svc ufw)"
 
 h "Fail2ban"
 if [ "$F2B_AVAILABLE" -eq 0 ]; then
@@ -227,19 +248,25 @@ if [ "$F2B_AVAILABLE" -eq 0 ]; then
 elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
   kv "Status" "${BAD}stopped${R}"
 else
-  kv "Jails" "${F2B_JAILS:-unknown}"
+  F2B_JAILS_DISPLAY="${F2B_JAILS_RAW:-unknown}"
+  kv "Jails" "$F2B_JAILS_DISPLAY"
   if [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
     if [ "$F2B_JAIL_WIDTH" -lt 8 ]; then
       F2B_JAIL_WIDTH=8
+    elif [ "$F2B_JAIL_WIDTH" -gt 18 ]; then
+      F2B_JAIL_WIDTH=18
     fi
     F2B_NUM_WIDTH=7
     printf "%b  %-*s%b %b%*s%b %b%*s%b %b%*s%b\n" \
-      "$L" "$F2B_JAIL_WIDTH" "Jail" "$R" \
-      "$L" "$F2B_NUM_WIDTH" "Bans" "$R" \
-      "$L" "$F2B_NUM_WIDTH" "Unbans" "$R" \
-      "$L" "$F2B_NUM_WIDTH" "Active" "$R"
+      "$DIM" "$F2B_JAIL_WIDTH" "Jail" "$R" \
+      "$DIM" "$F2B_NUM_WIDTH" "Bans" "$R" \
+      "$DIM" "$F2B_NUM_WIDTH" "Unbans" "$R" \
+      "$DIM" "$F2B_NUM_WIDTH" "Active" "$R"
     for i in "${!F2B_JAIL_NAMES[@]}"; do
       jail="${F2B_JAIL_NAMES[$i]}"
+      if [ "${#jail}" -gt "$F2B_JAIL_WIDTH" ]; then
+        jail="${jail:0:$((F2B_JAIL_WIDTH-1))}."
+      fi
       tb="${F2B_BANS[$i]}"
       tu="${F2B_UNBANS[$i]}"
       cb="${F2B_ACTIVE[$i]}"
