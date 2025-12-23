@@ -35,10 +35,16 @@ RULE_LINE="$(printf '%*s' "$RULE_WIDTH" '' | tr ' ' '-')"
 LABEL_W=12
 
 BAR_FULL="#"
-BAR_EMPTY="-"
+BAR_EMPTY="."
+SVC_OK="*"
+SVC_BAD="x"
+SVC_NI="-"
 if is_utf8; then
   BAR_FULL=$'\u2588'
   BAR_EMPTY=$'\u2591'
+  SVC_OK=$'\u25CF'
+  SVC_BAD=$'\u25CF'
+  SVC_NI=$'\u25CB'
 fi
 
 # ----- Helpers -----
@@ -65,25 +71,35 @@ svc() {
   load_state="$(systemctl show -p LoadState --value "$name" 2>/dev/null)"
 
   if [ -z "$load_state" ] || [ "$load_state" = "not-found" ]; then
-    printf "%bnot installed%b" "$NI" "$R"
+    printf "%b%s %s%b" "$NI" "$SVC_NI" "inactive" "$R"
     return 0
   fi
 
   if systemctl is-active --quiet "$name" 2>/dev/null; then
-    printf "%bactive%b" "$OK" "$R"
+    printf "%b%s %s%b" "$OK" "$SVC_OK" "active" "$R"
   else
-    printf "%bstopped%b" "$BAD" "$R"
+    printf "%b%s %s%b" "$BAD" "$SVC_BAD" "inactive" "$R"
   fi
 }
 
+svc_item() {
+  local name="$1"
+  local label="${2:-$1}"
+  printf "%b%-10s%b %s" "$L" "${label}:" "$R" "$(svc "$name")"
+}
+
 bar() {
-  local pct="$1" len="${2:-22}"
+  local pct="$1" len="${2:-24}"
   local filled=$(( pct * len / 100 ))
   local empty=$(( len - filled ))
   local out=""
+  out+="${DIM}[${R}"
+  out+="${OK}"
   for ((i=0;i<filled;i++)); do out+="${BAR_FULL}"; done
+  out+="${DIM}"
   for ((i=0;i<empty;i++)); do out+="${BAR_EMPTY}"; done
-  printf "%s" "$out"
+  out+="${DIM}]${R}"
+  printf "%b" "$out"
 }
 
 # ----- Fast system data -----
@@ -136,7 +152,7 @@ LAST_LOGIN=$(
 DISK_PCT=$(df / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
 DISK_USED=$(df -h / | awk 'NR==2 {print $3}')
 DISK_TOTAL=$(df -h / | awk 'NR==2 {print $2}')
-DISK_BAR=$(bar "${DISK_PCT:-0}" 22)
+DISK_BAR=$(bar "${DISK_PCT:-0}" 24)
 
 # updates (FAST only if apt-check exists)
 UPDATES_TOTAL="n/a"
@@ -166,12 +182,11 @@ kv "RAM"        "${MEM_USED} / ${MEM_TOTAL}"
 kv "Last Login" "${LAST_LOGIN:-unknown}"
 
 h "Storage"
-kv "Disk /" "[${DISK_BAR}]  ${DISK_PCT}%  ${DIM}(${DISK_USED}/${DISK_TOTAL})${R}"
+kv "Disk /" "${DISK_BAR}  ${DISK_PCT}%  ${DIM}(${DISK_USED}/${DISK_TOTAL})${R}"
 
 h "Services"
-kv "docker"   "$(svc docker)"
-kv "fail2ban" "$(svc fail2ban)"
-kv "ufw"      "$(svc ufw)"
+printf "  %s  %s\n" "$(svc_item docker)" "$(svc_item fail2ban)"
+printf "  %s\n" "$(svc_item ufw)"
 
 h "Updates"
 if [ "$UPDATES_TOTAL" = "n/a" ]; then
