@@ -145,38 +145,6 @@ if [ -x /usr/lib/update-notifier/apt-check ]; then
   IFS=';' read -r UPDATES_TOTAL UPDATES_SEC < <(/usr/lib/update-notifier/apt-check 2>/dev/null)
 fi
 
-# ----- Fail2ban stats -----
-F2B_AVAILABLE=0
-F2B_CLIENT=""
-if command -v fail2ban-client >/dev/null 2>&1; then
-  F2B_CLIENT="fail2ban-client"
-  F2B_AVAILABLE=1
-elif [ -x /usr/bin/fail2ban-client ]; then
-  F2B_CLIENT="/usr/bin/fail2ban-client"
-  F2B_AVAILABLE=1
-fi
-
-F2B_STATUS=""
-F2B_JAILS_RAW=""
-F2B_JAILS=""
-F2B_JAILS_DISPLAY=""
-
-f2b_counters() {
-  $F2B_CLIENT status "$1" 2>/dev/null | awk -F': *' '
-    /Currently banned/ {cb=$2}
-    /Total banned/ {tb=$2}
-    /Total unbanned/ {tu=$2}
-    END {print tb ";" tu ";" cb}
-  '
-}
-
-if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
-  F2B_STATUS="$($F2B_CLIENT status 2>/dev/null || true)"
-  if [ -n "$F2B_STATUS" ]; then
-    F2B_JAILS_RAW="$(printf "%s\n" "$F2B_STATUS" | sed -n 's/.*Jail list:[[:space:]]*//p' | tr -d '\r')"
-    F2B_JAILS="$(printf "%s" "$F2B_JAILS_RAW" | tr -d '[:space:]')"
-  fi
-fi
 
 # ----- Output -----
 echo
@@ -204,38 +172,6 @@ h "Services"
 kv "docker"   "$(svc docker)"
 kv "fail2ban" "$(svc fail2ban)"
 kv "ufw"      "$(svc ufw)"
-
-h "Fail2ban"
-if [ "$F2B_AVAILABLE" -eq 0 ]; then
-  kv "Status" "${NI}not installed${R}"
-elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
-  kv "Status" "${BAD}stopped${R}"
-else
-  F2B_JAILS_DISPLAY="${F2B_JAILS_RAW:-unknown}"
-  kv "Jails" "$F2B_JAILS_DISPLAY"
-  if [ -n "$F2B_JAILS" ]; then
-    IFS=',' read -r -a F2B_JAIL_LIST <<< "$F2B_JAILS"
-    for jail in "${F2B_JAIL_LIST[@]}"; do
-      [ -n "$jail" ] || continue
-      IFS=';' read -r tb tu cb < <(f2b_counters "$jail")
-      [ -n "$tb" ] || tb=0
-      [ -n "$tu" ] || tu=0
-      [ -n "$cb" ] || cb=0
-      kv "$jail" "${DIM}bans${R}=${X}${tb}${R} ${DIM}unbans${R}=${X}${tu}${R} ${DIM}active${R}=${X}${cb}${R}"
-    done
-  else
-    IFS=';' read -r tb tu cb < <(f2b_counters sshd)
-    if [ -n "$tb" ] || [ -n "$cb" ]; then
-      [ -n "$tb" ] || tb=0
-      [ -n "$tu" ] || tu=0
-      [ -n "$cb" ] || cb=0
-      kv "sshd" "${DIM}bans${R}=${X}${tb}${R} ${DIM}unbans${R}=${X}${tu}${R} ${DIM}active${R}=${X}${cb}${R}"
-    else
-      kv "Info" "${DIM}No jail stats found${R}"
-    fi
-  fi
-fi
-echo
 
 h "Updates"
 if [ "$UPDATES_TOTAL" = "n/a" ]; then
