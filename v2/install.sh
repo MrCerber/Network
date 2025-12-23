@@ -29,6 +29,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 CUSTOM_MOTD_99_SRC="${SCRIPT_DIR}/99-mrcerber"
 CUSTOM_MOTD_LOGO_SRC="${SCRIPT_DIR}/logo.txt"
+MOTD_BASE_URL="${MOTD_BASE_URL:-https://raw.githubusercontent.com/MrCerber/Network/refs/heads/main/v2}"
 
 MOTD_DIR="/etc/update-motd.d"
 BACKUP_DIR="/root/.mrcerber-bootstrap-backups"
@@ -245,16 +246,44 @@ enable_default_motd_scripts() {
 }
 
 install_custom_motd() {
-  [[ -f "${CUSTOM_MOTD_99_SRC}" ]] || die "Missing custom file: ${CUSTOM_MOTD_99_SRC}"
-  [[ -f "${CUSTOM_MOTD_LOGO_SRC}" ]] || die "Missing custom file: ${CUSTOM_MOTD_LOGO_SRC}"
+  local motd_99_src="${CUSTOM_MOTD_99_SRC}"
+  local motd_logo_src="${CUSTOM_MOTD_LOGO_SRC}"
+  local tmp_dir=""
+
+  if [[ ! -f "${motd_99_src}" || ! -f "${motd_logo_src}" ]]; then
+    if ! has_cmd curl && ! has_cmd wget; then
+      die "Missing custom files and neither curl nor wget is available."
+    fi
+    say "Custom MOTD files not found next to this script; downloading..."
+    tmp_dir="$(mktemp -d -t mrcerber-motd-XXXXXX)"
+    if [[ ! -f "${motd_99_src}" ]]; then
+      if has_cmd curl; then
+        curl -fsSL "${MOTD_BASE_URL}/99-mrcerber" -o "${tmp_dir}/99-mrcerber"
+      else
+        wget -qO "${tmp_dir}/99-mrcerber" "${MOTD_BASE_URL}/99-mrcerber"
+      fi
+      motd_99_src="${tmp_dir}/99-mrcerber"
+    fi
+    if [[ ! -f "${motd_logo_src}" ]]; then
+      if has_cmd curl; then
+        curl -fsSL "${MOTD_BASE_URL}/logo.txt" -o "${tmp_dir}/logo.txt"
+      else
+        wget -qO "${tmp_dir}/logo.txt" "${MOTD_BASE_URL}/logo.txt"
+      fi
+      motd_logo_src="${tmp_dir}/logo.txt"
+    fi
+  fi
+
+  [[ -f "${motd_99_src}" ]] || die "Missing custom file: ${motd_99_src}"
+  [[ -f "${motd_logo_src}" ]] || die "Missing custom file: ${motd_logo_src}"
 
   say "Installing custom MOTD..."
   ensure_dirs
   backup_dir_tar "${MOTD_DIR}"
 
   # Install files
-  install -m 0755 "${CUSTOM_MOTD_99_SRC}" "${MOTD_DIR}/99-mrcerber"
-  install -m 0644 "${CUSTOM_MOTD_LOGO_SRC}" "${MOTD_DIR}/logo.txt"
+  install -m 0755 "${motd_99_src}" "${MOTD_DIR}/99-mrcerber"
+  install -m 0644 "${motd_logo_src}" "${MOTD_DIR}/logo.txt"
 
   # Disable default MOTD scripts
   disable_default_motd_scripts
@@ -264,6 +293,10 @@ install_custom_motd() {
 
   say "Custom MOTD installed."
   say "Tip: ensure /etc/update-motd.d/99-mrcerber reads logo from /etc/update-motd.d/logo.txt."
+
+  if [[ -n "${tmp_dir}" ]]; then
+    rm -rf "${tmp_dir}"
+  fi
 }
 
 restore_default_motd() {
