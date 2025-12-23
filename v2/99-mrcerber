@@ -77,7 +77,7 @@ svc() {
 svc_item() {
   local name="$1"
   local label="${2:-$1}"
-  printf "%b%-10s%b %s" "$L" "${label}:" "$R" "$(svc "$name")"
+  printf "%b%s%b %s" "$L" "${label}:" "$R" "$(svc "$name")"
 }
 
 bar() {
@@ -177,8 +177,7 @@ h "Storage"
 kv "Disk /" "${DISK_BAR}  ${DISK_PCT}%  ${DIM}(${DISK_USED}/${DISK_TOTAL})${R}"
 
 h "Services"
-printf "  %s  %s\n" "$(svc_item docker)" "$(svc_item fail2ban)"
-printf "  %s\n" "$(svc_item ufw)"
+printf "  %s  %s  %s\n" "$(svc_item docker)" "$(svc_item fail2ban)" "$(svc_item ufw)"
 
 h "Updates"
 if [ "$UPDATES_TOTAL" = "n/a" ]; then
