@@ -13,13 +13,6 @@ R=$'\e[0m'
 LOGO_FILE="/etc/update-motd.d/logo.txt"
 USER_NAME="${PAM_USER:-$USER}"
 
-is_utf8() {
-  if [[ "${MOTD_ASCII:-0}" == "1" ]]; then
-    return 1
-  fi
-  return 0
-}
-
 COLS="$(tput cols 2>/dev/null || echo 80)"
 if ! [[ "$COLS" =~ ^[0-9]+$ ]]; then
   COLS=80
@@ -33,17 +26,17 @@ fi
 RULE_LINE="$(printf '%*s' "$RULE_WIDTH" '' | tr ' ' '-')"
 LABEL_W=12
 
-BAR_FULL="="
-BAR_EMPTY="="
-SVC_OK="o"
-SVC_BAD="o"
-SVC_NI="o"
-if is_utf8; then
-  BAR_FULL=$'\u2588'
-  BAR_EMPTY=$'\u2591'
-  SVC_OK=$'\u25CF'
-  SVC_BAD=$'\u25CF'
-  SVC_NI=$'\u25CB'
+BAR_FULL="$(printf '\xE2\x96\x88')" # █
+BAR_EMPTY="$(printf '\xE2\x96\x91')" # ░
+SVC_OK="$(printf '\xE2\x97\x8F')"   # ●
+SVC_BAD="$(printf '\xE2\x97\x8F')"  # ●
+SVC_NI="$(printf '\xE2\x97\x8B')"   # ○
+if [[ "${MOTD_ASCII:-0}" == "1" ]]; then
+  BAR_FULL="#"
+  BAR_EMPTY="."
+  SVC_OK="*"
+  SVC_BAD="*"
+  SVC_NI="o"
 fi
 
 # ----- Helpers -----
