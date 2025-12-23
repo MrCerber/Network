@@ -143,7 +143,11 @@ fi
 F2B_STATUS=""
 F2B_JAILS_RAW=""
 F2B_JAILS=""
-F2B_LINES=""
+F2B_JAIL_NAMES=()
+F2B_BANS=()
+F2B_UNBANS=()
+F2B_ACTIVE=()
+F2B_JAIL_WIDTH=4
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
   F2B_STATUS="$($F2B_CLIENT status 2>/dev/null || true)"
@@ -177,19 +181,13 @@ if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/nul
       if [ -z "$tb" ] && [ -z "$cb" ]; then
         continue
       fi
-      if [ -n "$tu" ]; then
-        printf -v line "%b  %-14s%b %b%s%b bans  %b%s%b unbans  %b%s%b active" \
-          "$L" "$jail" "$R" \
-          "$X" "$tb" "$R" \
-          "$X" "$tu" "$R" \
-          "$X" "$cb" "$R"
-      else
-        printf -v line "%b  %-14s%b %b%s%b bans  %b%s%b active" \
-          "$L" "$jail" "$R" \
-          "$X" "$tb" "$R" \
-          "$X" "$cb" "$R"
+      F2B_JAIL_NAMES+=( "$jail" )
+      F2B_BANS+=( "${tb:-0}" )
+      F2B_UNBANS+=( "$tu" )
+      F2B_ACTIVE+=( "${cb:-0}" )
+      if [ "${#jail}" -gt "$F2B_JAIL_WIDTH" ]; then
+        F2B_JAIL_WIDTH="${#jail}"
       fi
-      F2B_LINES+="${line}"$'\n'
     done
   fi
 fi
@@ -230,8 +228,28 @@ elif ! systemctl is-active --quiet fail2ban 2>/dev/null; then
   kv "Status" "${BAD}stopped${R}"
 else
   kv "Jails" "${F2B_JAILS:-unknown}"
-  if [ -n "$F2B_LINES" ]; then
-    printf "%b" "$F2B_LINES"
+  if [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
+    if [ "$F2B_JAIL_WIDTH" -lt 8 ]; then
+      F2B_JAIL_WIDTH=8
+    fi
+    F2B_NUM_WIDTH=7
+    printf "%b  %-*s%b %b%*s%b %b%*s%b %b%*s%b\n" \
+      "$L" "$F2B_JAIL_WIDTH" "Jail" "$R" \
+      "$L" "$F2B_NUM_WIDTH" "Bans" "$R" \
+      "$L" "$F2B_NUM_WIDTH" "Unbans" "$R" \
+      "$L" "$F2B_NUM_WIDTH" "Active" "$R"
+    for i in "${!F2B_JAIL_NAMES[@]}"; do
+      jail="${F2B_JAIL_NAMES[$i]}"
+      tb="${F2B_BANS[$i]}"
+      tu="${F2B_UNBANS[$i]}"
+      cb="${F2B_ACTIVE[$i]}"
+      [ -n "$tu" ] || tu="-"
+      printf "%b  %-*s%b %b%*s%b %b%*s%b %b%*s%b\n" \
+        "$L" "$F2B_JAIL_WIDTH" "$jail" "$R" \
+        "$X" "$F2B_NUM_WIDTH" "$tb" "$R" \
+        "$X" "$F2B_NUM_WIDTH" "$tu" "$R" \
+        "$X" "$F2B_NUM_WIDTH" "$cb" "$R"
+    done
   else
     kv "Info" "${DIM}No jail stats found${R}"
   fi
