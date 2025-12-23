@@ -163,6 +163,7 @@ F2B_JAIL_NAMES=()
 F2B_BANS=()
 F2B_UNBANS=()
 F2B_ACTIVE=()
+F2B_NUM_W=5
 F2B_JAILS_DISPLAY=""
 
 if [ "$F2B_AVAILABLE" -eq 1 ] && systemctl is-active --quiet fail2ban 2>/dev/null; then
@@ -249,14 +250,13 @@ else
   if [ "${#F2B_JAIL_NAMES[@]}" -gt 0 ]; then
     for i in "${!F2B_JAIL_NAMES[@]}"; do
       jail="${F2B_JAIL_NAMES[$i]}"
-      tb="${F2B_BANS[$i]}"
-      tu="${F2B_UNBANS[$i]}"
-      cb="${F2B_ACTIVE[$i]}"
-      if [ -n "$tu" ]; then
-        kv "$jail" "${X}bans${R} ${tb:-0}  ${X}unbans${R} ${tu}  ${X}active${R} ${cb:-0}"
-      else
-        kv "$jail" "${X}bans${R} ${tb:-0}  ${X}active${R} ${cb:-0}"
-      fi
+      tb="${F2B_BANS[$i]:-0}"
+      tu="${F2B_UNBANS[$i]:-0}"
+      cb="${F2B_ACTIVE[$i]:-0}"
+      tb_pad=$(printf "%*s" "$F2B_NUM_W" "$tb")
+      tu_pad=$(printf "%*s" "$F2B_NUM_W" "$tu")
+      cb_pad=$(printf "%*s" "$F2B_NUM_W" "$cb")
+      kv "$jail" "${DIM}bans${R} ${X}${tb_pad}${R}  ${DIM}unbans${R} ${X}${tu_pad}${R}  ${DIM}active${R} ${X}${cb_pad}${R}"
     done
   else
     kv "Info" "${DIM}No jail stats found${R}"
